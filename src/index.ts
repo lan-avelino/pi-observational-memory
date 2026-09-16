@@ -49,7 +49,7 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 		runtime.enabled = readGateFromLedger(branch);
 		if (runtime.enabled) runtime.memoryRoot = ensureSessionMemory(ctx);
 		attachIfEnabled(ctx);
-		runtime.refreshFooterGauges(branch, ctx.getContextUsage?.()?.tokens ?? null);
+		runtime.refreshFooterGauges(branch, ctx.getContextUsage?.() ?? null);
 		runtime.refreshCost(ctx.sessionManager.getEntries() as Entry[]);
 	});
 
@@ -72,7 +72,7 @@ export default function observationalMemory(pi: ExtensionAPI): void {
 			if (next) {
 				runtime.memoryRoot = ensureSessionMemory(ctx);
 				attachIfEnabled(ctx);
-				runtime.refreshFooterGauges(ctx.sessionManager.getBranch() as Entry[], ctx.getContextUsage?.()?.tokens ?? null);
+				runtime.refreshFooterGauges(ctx.sessionManager.getBranch() as Entry[], ctx.getContextUsage?.() ?? null);
 				runtime.refreshCost(ctx.sessionManager.getEntries() as Entry[]);
 			} else {
 				runtime.abortAllWorkers();

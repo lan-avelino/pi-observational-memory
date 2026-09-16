@@ -142,7 +142,7 @@ async function dispatchConsolidator(
 		atomicWrite(indexPath(runtime.memoryRoot), renderIndexFile(listTopics(runtime.memoryRoot)));
 
 		runtime.status.workerDone(runId, toDrop.length);
-		runtime.refreshFooterGauges(ctx.sessionManager.getBranch(), ctx.getContextUsage?.()?.tokens ?? null);
+		runtime.refreshFooterGauges(ctx.sessionManager.getBranch(), ctx.getContextUsage?.() ?? null);
 		if (ctx.hasUI && ctx.ui) {
 			runtime.queueToast(`om: consolidator promoted ${toDrop.length} obs`, "info", ctx.ui.notify.bind(ctx.ui));
 		}

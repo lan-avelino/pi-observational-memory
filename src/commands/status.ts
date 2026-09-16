@@ -18,7 +18,16 @@ export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void 
 			const branch = ctx.sessionManager.getBranch() as Entry[];
 			const folded = foldLedger(branch);
 			const sinceObservation = rawTokensSinceObservationCoverage(branch);
-			const contextTokens = ctx.getContextUsage?.()?.tokens ?? null;
+			const usage = ctx.getContextUsage?.();
+			const contextTokens = usage?.tokens ?? null;
+			const contextWindow = usage?.contextWindow;
+			const compactAt = runtime.effectiveCompactAtTokens(contextWindow);
+			const compactDetail =
+				contextWindow == null
+					? ""
+					: compactAt < runtime.config.compactAtContextTokens
+						? ` (window ${contextWindow.toLocaleString()}, ${Math.round(runtime.config.compactAtWindowFraction * 100)}% cap)`
+						: ` (window ${contextWindow.toLocaleString()}; configured absolute binds)`;
 			const pool = poolTokens(folded.activeObservations);
 			const topicCount = listTopics(runtime.memoryRoot).length;
 			const journey = readJourney(runtime.memoryRoot);
@@ -34,7 +43,7 @@ export function registerStatusCommand(pi: ExtensionAPI, runtime: Runtime): void 
 				`  last compaction wait: ${runtime.lastCompactionObserverWait ?? "n/a"}`,
 				`  topic files: ${topicCount}`,
 				`  journey: ${journey ? `~${estimateStringTokens(journey).toLocaleString()} / ${runtime.config.journeyTargetTokens.toLocaleString()} tok` : "none yet"}`,
-				`  context: ${contextTokens != null ? contextTokens.toLocaleString() : "?"} / ${runtime.config.compactAtContextTokens.toLocaleString()} tok`,
+				`  context: ${contextTokens != null ? contextTokens.toLocaleString() : "?"} / ${compactAt.toLocaleString()} tok${compactDetail}`,
 				`  session cost: $${costUsd.toFixed(4)} (${runs} run${runs === 1 ? "" : "s"})`,
 				runtime.lastWorkerError ? `  last error: ${runtime.lastWorkerError}` : `  last error: none`,
 				"",

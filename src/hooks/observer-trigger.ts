@@ -101,7 +101,7 @@ export function evaluateObserverTriggers(pi: ExtensionAPI, runtime: Runtime, ctx
 	}
 
 	if (startToastLines.length > 0) ui?.notify(startToastLines.join("\n"), "info");
-	runtime.refreshFooterGauges(sessionManager.getBranch(), ctx.getContextUsage?.()?.tokens ?? null);
+	runtime.refreshFooterGauges(sessionManager.getBranch(), ctx.getContextUsage?.() ?? null);
 }
 
 async function dispatchObserver(
@@ -169,7 +169,7 @@ async function dispatchObserver(
 			pi.appendEntry(OM_OBSERVATIONS_RECORDED, { observations, coversUpToId });
 		}
 		runtime.status.workerDone(runId, observations.length);
-		runtime.refreshFooterGauges(ctx.sessionManager.getBranch(), ctx.getContextUsage?.()?.tokens ?? null);
+		runtime.refreshFooterGauges(ctx.sessionManager.getBranch(), ctx.getContextUsage?.() ?? null);
 		if (ctx.hasUI && ctx.ui) {
 			// Route through the coalescer: if another observer finishes in the same
 			// tick its line joins this one in a single multi-line notify call.

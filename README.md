@@ -41,7 +41,8 @@ consolidator draining the oldest observations into durable per-session memory fi
 - **Observation** = `{ timestamp, content, tokenCount }`. The precise event-`timestamp`
   doubles as the id; the orchestrator re-derives a unique, second-resolution id at commit
   (the observer only emits minute resolution).
-- **Compaction** (`agent_end` over `compactAtContextTokens`, when idle): waits for in-flight
+- **Compaction** (`turn_end` over the effective threshold = `min(compactAtContextTokens,
+  compactAtWindowFraction × contextWindow)`): waits for in-flight
   observers, then renders the active buffer plus a **memory map** (rendered live from
   `.memory/<session>/` topic front-matter) and a **journey** section (`.memory/<session>/JOURNEY.md`, read
   verbatim). The cutoff snaps to an observation chunk boundary so the verbatim tail is never
@@ -102,23 +103,59 @@ Namespace `observational-memory` in `~/.pi/agent/settings.json` (global) or
 ```jsonc
 {
   "observational-memory": {
-    "chunkTokens": 5000,
+    "chunkTokens": 15000,
     "chunkOverlapTokens": 0,
-    "poolTargetTokens": 10000,           // buffer drains back toward this after consolidation
-    "consolidateAtPoolTokens": 20000,    // pool size that triggers a consolidation (200% of target)
-    "compactAtContextTokens": 100000,    // tune per model
-    "tailTokens": 20000,                 // verbatim tail; snaps to a chunk boundary
-    "journeyTargetTokens": 1000,         // pushed JOURNEY.md size; compress oldest segments past this
-    "observerConcurrency": 4,
+    "poolTargetTokens": 30000,           // buffer drains back toward this after consolidation
+    "consolidateAtPoolTokens": 50000,    // pool size that triggers a consolidation (≈1.7× target)
+    "compactAtContextTokens": 320000,    // ~62% of a 512k window; tune per model
+    "compactAtWindowFraction": 0.7,      // hard cap: min(above, 0.7 × model context window)
+    "tailTokens": 40000,                 // verbatim tail; snaps to a chunk boundary
+    "journeyTargetTokens": 4000,         // pushed JOURNEY.md size; compress oldest segments past this
+    "observerConcurrency": 6,
     "models": {
-      "observer":     { "provider": "anthropic", "id": "claude-sonnet-4-6", "thinking": "low" },
-      "consolidator": { "provider": "anthropic", "id": "claude-sonnet-4-6", "thinking": "medium" }
+      "observer":     { "provider": "openrouter", "id": "z-ai/glm-5.3", "thinking": "low" },
+      "consolidator": { "provider": "openrouter", "id": "z-ai/glm-5.3", "thinking": "medium" }
     },
     "passive": false,
     "debugLog": false
   }
 }
 ```
+
+### Window sizing
+
+The defaults above are tuned for a **512k** context window. The knobs that must move with the
+window are `compactAtContextTokens` (the trigger), `tailTokens` (the verbatim tail kept after the
+cutoff), `poolTargetTokens` / `consolidateAtPoolTokens` (how much distilled memory rides in
+context), and `chunkTokens` (which is also the snap resolution for the tail). Rough guide:
+
+| window | `compactAtContextTokens` | `tailTokens` | `poolTargetTokens` | `consolidateAtPoolTokens` |
+|---|---|---|---|---|
+| 200k | 140,000 | 20,000 | 15,000 | 25,000 |
+| 512k | 320,000 | 40,000 | 30,000 | 50,000 |
+| 1M | 700,000 | 80,000 | 60,000 | 100,000 |
+
+Leave `chunkTokens` at 10–15k: it sets the tail snap precision (±`chunkTokens/2`), so inflating it
+to save observer spawns makes the cutoff coarser. Raise `observerConcurrency` instead. Keep
+`compactAtContextTokens` below the provider's usable window minus the max output — 1M is often a
+beta tier with tighter effective limits.
+
+### Interaction with pi's own compaction
+
+Pi auto-compacts at `contextWindow - reserveTokens` (`reserveTokens` default 16,384), and **that
+same path is the only context-overflow recovery net**. So:
+
+- **Leave `compaction.enabled` at its default (`true`).** Disabling it sets `_checkCompaction()`
+  to return early for *all* three cases — threshold, overflow-with-retry, and overflow-without-retry
+  — so you lose compact-and-retry on a provider overflow. OM does not need it disabled.
+- **`compactAtWindowFraction` is what keeps OM first.** The effective threshold is
+  `min(compactAtContextTokens, floor(fraction × contextWindow))`, resolved from the live
+  `ContextUsage.contextWindow` on every check. At the default `0.7` that is always below pi's
+  `window - 16,384`, for any window above ~55k tokens. The footer gauge and `/om:status` show the
+  effective value and where it came from (`configured absolute binds` vs `70% cap`).
+- **A pi-first compaction is benign.** OM's `session_before_compact` handler supplies the summary
+  block either way, and `snapCutoff()` re-picks the verbatim cutoff from the observation chunk
+  boundaries rather than trusting pi's proposal. A collision costs timing, not correctness.
 
 `PI_OM_PASSIVE=1` forces `passive` (disables all triggers) for clean `/tree` testing.
 `passive` is a power-user setting distinct from the on/off gate.

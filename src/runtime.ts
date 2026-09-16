@@ -1,4 +1,4 @@
-import { type Config, DEFAULTS, loadConfig } from "./config.js";
+import { type Config, DEFAULTS, effectiveCompactAtTokens, loadConfig } from "./config.js";
 import { foldLedger, poolTokens, rawTokensSinceObservationCoverage, sumSessionCost, type Entry } from "./ledger/index.js";
 import { StatusController } from "./ui/status-controller.js";
 
@@ -111,8 +111,16 @@ export class Runtime {
 		this.configLoaded = true;
 	}
 
+	/**
+	 * Effective compaction threshold for a model context window — `compactAtContextTokens`
+	 * capped by `compactAtWindowFraction * contextWindow`. See `effectiveCompactAtTokens`.
+	 */
+	effectiveCompactAtTokens(contextWindow?: number): number {
+		return effectiveCompactAtTokens(this.config, contextWindow);
+	}
+
 	/** Recompute the live footer gauges (next-observer + pool + context) from the current branch. */
-	refreshFooterGauges(branch: Entry[], contextTokens?: number | null): void {
+	refreshFooterGauges(branch: Entry[], usage?: { tokens: number | null; contextWindow?: number } | null): void {
 		if (!this.enabled) return;
 		const folded = foldLedger(branch);
 		this.status.setGauges({
@@ -120,8 +128,8 @@ export class Runtime {
 			nextMax: this.config.chunkTokens,
 			poolValue: poolTokens(folded.activeObservations),
 			poolMax: this.config.consolidateAtPoolTokens,
-			ctxValue: contextTokens ?? 0,
-			ctxMax: this.config.compactAtContextTokens,
+			ctxValue: usage?.tokens ?? 0,
+			ctxMax: this.effectiveCompactAtTokens(usage?.contextWindow),
 		});
 	}
 

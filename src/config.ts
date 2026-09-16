@@ -20,6 +20,19 @@ export interface Config {
 	consolidateAtPoolTokens: number;
 	/** Live context-window usage that triggers compaction. */
 	compactAtContextTokens: number;
+	/**
+	 * Hard cap on `compactAtContextTokens` as a fraction of the model's real context window.
+	 *
+	 * pi's own auto-compaction fires at `contextWindow - reserveTokens` (default reserve
+	 * 16,384), and that same path is the only context-overflow recovery net. OM must stay
+	 * strictly below pi's threshold or pi steals the trigger. Rather than disabling pi's
+	 * compaction (which would also disable overflow recovery), the effective threshold is
+	 * `min(compactAtContextTokens, floor(compactAtWindowFraction * contextWindow))`.
+	 *
+	 * Default 0.7 is safely under `1 - reserveTokens/contextWindow` for any window above
+	 * ~55k tokens. This value only ever LOWERS the configured absolute.
+	 */
+	compactAtWindowFraction: number;
 	/** Verbatim raw tail kept after the cutoff; snaps to a chunk boundary. */
 	tailTokens: number;
 	/**
@@ -47,14 +60,15 @@ export interface Config {
 }
 
 export const DEFAULTS: Config = {
-	chunkTokens: 10_000,
+	chunkTokens: 15_000,
 	chunkOverlapTokens: 0,
-	poolTargetTokens: 10_000,
-	consolidateAtPoolTokens: 15_000,
-	compactAtContextTokens: 150_000,
-	tailTokens: 20_000,
-	journeyTargetTokens: 1_000,
-	observerConcurrency: 4,
+	poolTargetTokens: 30_000,
+	consolidateAtPoolTokens: 50_000,
+	compactAtContextTokens: 320_000,
+	compactAtWindowFraction: 0.7,
+	tailTokens: 40_000,
+	journeyTargetTokens: 4_000,
+	observerConcurrency: 6,
 	resumeAfterMidRunCompaction: true,
 	models: {
 		observer: { provider: "openrouter", id: "z-ai/glm-5.3", thinking: "low" },
@@ -71,6 +85,11 @@ const PASSIVE_ENV = "PI_OM_PASSIVE";
 
 function positiveIntegerOrUndefined(value: unknown): number | undefined {
 	return Number.isInteger(value) && typeof value === "number" && value > 0 ? value : undefined;
+}
+
+/** A fraction in (0, 1]. Used for window-relative caps. */
+function unitFractionOrUndefined(value: unknown): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value > 0 && value <= 1 ? value : undefined;
 }
 
 function isThinkingLevel(value: unknown): value is ModelThinkingLevel {
@@ -113,6 +132,8 @@ function normalizeSettingsConfig(value: Record<string, unknown>, base: Config): 
 	}
 	// chunkOverlapTokens may legitimately be 0.
 	if (value.chunkOverlapTokens === 0) normalized.chunkOverlapTokens = 0;
+	const fraction = unitFractionOrUndefined(value.compactAtWindowFraction);
+	if (fraction !== undefined) normalized.compactAtWindowFraction = fraction;
 	if (typeof value.resumeAfterMidRunCompaction === "boolean")
 		normalized.resumeAfterMidRunCompaction = value.resumeAfterMidRunCompaction;
 	if (typeof value.passive === "boolean") normalized.passive = value.passive;
@@ -144,6 +165,24 @@ function readNamespacedConfig(path: string, base: Config): Partial<Config> {
 	} catch {
 		return {};
 	}
+}
+
+/**
+ * Resolve the effective compaction threshold for a model context window.
+ *
+ * Returns `min(compactAtContextTokens, floor(compactAtWindowFraction * contextWindow))` so OM
+ * always fires before pi's own threshold (`contextWindow - reserveTokens`). When the window is
+ * unknown the configured absolute is returned unchanged — never raised.
+ */
+export function effectiveCompactAtTokens(
+	config: Pick<Config, "compactAtContextTokens" | "compactAtWindowFraction">,
+	contextWindow?: number,
+): number {
+	const configured = config.compactAtContextTokens;
+	if (contextWindow === undefined || !Number.isFinite(contextWindow) || contextWindow <= 0) {
+		return configured;
+	}
+	return Math.min(configured, Math.floor(contextWindow * config.compactAtWindowFraction));
 }
 
 export function loadConfig(cwd: string, env: NodeJS.ProcessEnv = process.env): Config {
